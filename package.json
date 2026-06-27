@@ -1,0 +1,12 @@
+{
+  "name": "true-world-map",
+  "version": "1.0.0",
+  "private": true,
+  "description": "An interactive map revealing how the Mercator projection distorts the true size of countries.",
+  "scripts": {
+    "dev": "python3 -m http.server 5173",
+    "start": "python3 -m http.server 5173"
+  },
+  "keywords": ["map", "mercator", "geography", "d3", "true-size"],
+  "license": "MIT"
+}
