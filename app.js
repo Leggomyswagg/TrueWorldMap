@@ -8,6 +8,9 @@
 
 const DATA_URL = "./data/countries-110m.json";
 const DEG = Math.PI / 180;
+// Keep relocated geometry away from the poles, where the Mercator/longitude
+// scaling would otherwise explode toward infinity.
+const MAX_LAT = 84;
 
 const svg = d3.select("#map");
 const mapEl = document.getElementById("map");
@@ -60,7 +63,30 @@ function relocateGeometry(geometry, srcCentroid, dstCentroid) {
 }
 
 function clampLat(lat) {
-  return Math.max(-89.9, Math.min(89.9, lat));
+  return Math.max(-MAX_LAT, Math.min(MAX_LAT, lat));
+}
+
+// Build an SVG path for a relocated ghost by projecting each vertex to pixels
+// and joining them with straight segments. Unlike d3.geoPath, this does NOT do
+// spherical clipping, so a polygon whose longitude wraps past the antimeridian
+// can't smear a giant fill band across the whole map.
+function geometryToPixelPath(geometry) {
+  const polys =
+    geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
+  let d = "";
+  for (const poly of polys) {
+    for (const ring of poly) {
+      let started = false;
+      for (const pt of ring) {
+        const p = projection(pt);
+        if (!p || !isFinite(p[0]) || !isFinite(p[1])) continue;
+        d += (started ? "L" : "M") + p[0].toFixed(2) + "," + p[1].toFixed(2);
+        started = true;
+      }
+      if (started) d += "Z";
+    }
+  }
+  return d;
 }
 
 // Recursively map every coordinate pair in a GeoJSON geometry.
@@ -141,7 +167,7 @@ function makeGhost(feature, startCentroid) {
     .append("path")
     .datum({ feature, geometry: feature.geometry, centroid: startCentroid })
     .attr("class", "ghost")
-    .attr("d", path(feature.geometry));
+    .attr("d", geometryToPixelPath(feature.geometry));
   return node;
 }
 
@@ -182,7 +208,9 @@ function attachGhostDrag(node, feature, srcCentroid) {
       if (!dst || isNaN(dst[0])) return;
       const dstCentroid = [dst[0], clampLat(dst[1])];
       const moved = relocateGeometry(feature.geometry, srcCentroid, dstCentroid);
-      d3.select(this).attr("d", path(moved)).datum({ feature, geometry: moved, centroid: dstCentroid });
+      d3.select(this)
+        .attr("d", geometryToPixelPath(moved))
+        .datum({ feature, geometry: moved, centroid: dstCentroid });
       updateReadout(feature.properties.name, dstCentroid[1]);
     })
     .on("end", function () {
@@ -218,7 +246,7 @@ function attachCountryDrag() {
         dstCentroid
       );
       activeGhost.node
-        .attr("d", path(moved))
+        .attr("d", geometryToPixelPath(moved))
         .datum({ feature: activeGhost.feature, geometry: moved, centroid: dstCentroid });
       updateReadout(activeGhost.feature.properties.name, dstCentroid[1]);
     })
@@ -280,7 +308,7 @@ function spawnGhostAtCenter(feature) {
     .append("path")
     .datum({ feature, geometry: moved, centroid: dstCentroid })
     .attr("class", "ghost flash")
-    .attr("d", path(moved));
+    .attr("d", geometryToPixelPath(moved));
   setTimeout(() => node.classed("flash", false), 220);
   attachGhostDrag(node, feature, srcCentroid);
   updateReadout(feature.properties.name, dstCentroid[1]);
