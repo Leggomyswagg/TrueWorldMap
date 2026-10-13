@@ -20,11 +20,17 @@ Double-click a dragged country to remove it; **Reset all** clears everything.
 
 ## How it works
 
-Each country's vertices are expressed as ground-distance offsets from its
-centroid (latitude in degrees, longitude scaled by `cos(latitude)`), then
-re-applied at the drop latitude. This preserves the country's true size while
-the Mercator canvas stretches it — the same approximation used by
-[thetruesize.com](https://thetruesize.com).
+Each country's vertices are rotated together on the sphere, moving its centroid
+to the drop location. This rigid rotation preserves ground distances and
+spherical area, even for large countries and shapes crossing the antimeridian.
+D3 clips the rotated geometry at the map seam before drawing it. The Mercator
+canvas still stretches its visible size: local area inflation is
+`1 / cos(latitude)^2` (4× at 60°). Latitude of the drag anchor is limited to ±84°
+to keep controls usable near the poles.
+
+Draggable copies retain their geographic positions when the window is resized.
+Search results work with keyboard focus and Enter; clearing the search also
+clears its selection.
 
 ## Run locally
 
@@ -34,6 +40,9 @@ It's a static site — no build step. Serve the folder with any static server:
 npm run dev        # python3 -m http.server 5173
 # then open http://localhost:5173
 ```
+
+Run geometry and area-preservation regression tests with `npm test` (Node 18+;
+no package installation needed). The tests use the bundled country data.
 
 ## Deploy to Vercel
 

@@ -7,10 +7,7 @@
  */
 
 const DATA_URL = "./data/countries-110m.json";
-const DEG = Math.PI / 180;
-// Keep relocated geometry away from the poles, where the Mercator/longitude
-// scaling would otherwise explode toward infinity.
-const MAX_LAT = 84;
+const { clampLat, relocateGeometry, mercatorAreaInflation } = TrueWorldGeometry;
 
 const svg = d3.select("#map");
 const mapEl = document.getElementById("map");
@@ -40,74 +37,10 @@ function featureCentroid(feature) {
   return d3.geoCentroid(feature);
 }
 
-// Translate a feature so its centroid lands on [targetLng, targetLat] while
-// preserving true ground size. We express every vertex as a metric offset from
-// the source centroid (latitude in degrees, longitude scaled by cos(lat) so a
-// degree of longitude shrinks toward the poles), then re-apply that offset at
-// the destination latitude. This is the same approximation thetruesize.com uses.
-function relocateGeometry(geometry, srcCentroid, dstCentroid) {
-  const [srcLng, srcLat] = srcCentroid;
-  const [dstLng, dstLat] = dstCentroid;
-  const srcCos = Math.max(Math.cos(srcLat * DEG), 1e-6);
-  const dstCos = Math.max(Math.cos(dstLat * DEG), 1e-6);
-
-  const mapPoint = ([lng, lat]) => {
-    const dLat = lat - srcLat;
-    const dLng = (lng - srcLng) * srcCos; // ground-distance preserving
-    const newLat = clampLat(dstLat + dLat);
-    const newLng = dstLng + dLng / dstCos;
-    return [newLng, newLat];
-  };
-
-  return mapGeometryCoords(geometry, mapPoint);
-}
-
-function clampLat(lat) {
-  return Math.max(-MAX_LAT, Math.min(MAX_LAT, lat));
-}
-
-// Build an SVG path for a relocated ghost by projecting each vertex to pixels
-// and joining them with straight segments. Unlike d3.geoPath, this does NOT do
-// spherical clipping, so a polygon whose longitude wraps past the antimeridian
-// can't smear a giant fill band across the whole map.
+// D3 performs spherical clipping at the antimeridian and the Mercator bounds.
+// Joining raw projected vertices would draw fill bands across the map seam.
 function geometryToPixelPath(geometry) {
-  const polys =
-    geometry.type === "Polygon" ? [geometry.coordinates] : geometry.coordinates;
-  let d = "";
-  for (const poly of polys) {
-    for (const ring of poly) {
-      let started = false;
-      for (const pt of ring) {
-        const p = projection(pt);
-        if (!p || !isFinite(p[0]) || !isFinite(p[1])) continue;
-        d += (started ? "L" : "M") + p[0].toFixed(2) + "," + p[1].toFixed(2);
-        started = true;
-      }
-      if (started) d += "Z";
-    }
-  }
-  return d;
-}
-
-// Recursively map every coordinate pair in a GeoJSON geometry.
-function mapGeometryCoords(geometry, fn) {
-  const walk = (coords, depth) =>
-    depth === 0 ? fn(coords) : coords.map((c) => walk(c, depth - 1));
-
-  const depthFor = {
-    Point: 0,
-    MultiPoint: 1,
-    LineString: 1,
-    MultiLineString: 2,
-    Polygon: 2,
-    MultiPolygon: 3,
-  };
-
-  const depth = depthFor[geometry.type];
-  return {
-    type: geometry.type,
-    coordinates: walk(geometry.coordinates, depth),
-  };
+  return path({ type: "Feature", geometry });
 }
 
 /* --- Projection / sizing -------------------------------------------------- */
@@ -172,13 +105,11 @@ function makeGhost(feature, startCentroid) {
 }
 
 function updateReadout(name, dstLat) {
-  // On-screen area scale relative to the country's home latitude is dominated
-  // by sec(lat). Report how inflated the country LOOKS at this latitude.
-  const inflate = 1 / Math.max(Math.cos(dstLat * DEG), 1e-6);
+  const inflate = mercatorAreaInflation(dstLat);
   readoutEl.hidden = false;
   readoutEl.querySelector(".readout-name").textContent = name;
   readoutEl.querySelector(".readout-scale").textContent =
-    `Mercator inflation here: ~${inflate.toFixed(1)}×`;
+    `Mercator area inflation here: ~${inflate.toFixed(1)}×`;
 }
 
 function hideReadout() {
@@ -267,12 +198,16 @@ function buildSearch() {
     resultsEl.innerHTML = "";
     list.slice(0, 8).forEach((feature) => {
       const li = document.createElement("li");
-      li.textContent = feature.properties.name;
-      li.addEventListener("click", () => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = feature.properties.name;
+      button.addEventListener("click", () => {
         spawnGhostAtCenter(feature);
         searchInput.value = "";
+        current = [];
         resultsEl.innerHTML = "";
       });
+      li.appendChild(button);
       resultsEl.appendChild(li);
     });
   };
@@ -280,6 +215,7 @@ function buildSearch() {
   searchInput.addEventListener("input", () => {
     const q = searchInput.value.trim().toLowerCase();
     if (!q) {
+      current = [];
       resultsEl.innerHTML = "";
       return;
     }
@@ -291,8 +227,14 @@ function buildSearch() {
 
   searchInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && current.length) {
+      e.preventDefault();
       spawnGhostAtCenter(current[0]);
       searchInput.value = "";
+      current = [];
+      resultsEl.innerHTML = "";
+    } else if (e.key === "Escape") {
+      searchInput.value = "";
+      current = [];
       resultsEl.innerHTML = "";
     }
   });
@@ -327,10 +269,9 @@ let resizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
-    gGhosts.selectAll("*").remove();
-    hideReadout();
     setupProjection();
     renderBase();
+    gGhosts.selectAll("path.ghost").attr("d", ghost => geometryToPixelPath(ghost.geometry));
   }, 150);
 });
 
