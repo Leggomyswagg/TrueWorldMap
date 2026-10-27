@@ -115,15 +115,20 @@ html, body {
   max-height: 190px;
   overflow-y: auto;
 }
-#search-results li {
+#search-results button {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  text-align: left;
   padding: 7px 10px;
   border-radius: 8px;
   cursor: pointer;
   font-size: 13.5px;
   color: var(--ink);
 }
-#search-results li:hover,
-#search-results li.active { background: var(--accent); color: #06122e; }
+#search-results button:hover,
+#search-results button:focus-visible { background: var(--accent); color: #06122e; }
 
 #reset-btn {
   width: 100%;
@@ -212,6 +217,7 @@ html, body {
   gap: 2px;
 }
 .readout-name { font-weight: 600; color: var(--accent-2); }
+.readout[hidden] { display: none; }
 .readout-scale { color: var(--muted); font-size: 12px; }
 
 /* Responsive ------------------------------------------------------------- */
